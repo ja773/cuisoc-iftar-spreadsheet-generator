@@ -70,16 +70,16 @@ function createGenderSheet(ss, sheetName, gender) {
 
   // FILTER function based on gender, with SPLIT for Line Item Variant
   sheet.getRange("A3").setFormula(
-    `=SORT(` +
-      `HSTACK(` +
-        `ARRAYFORMULA(SPLIT(` +
-          `FILTER(Sheet1!U2:U, ISNUMBER(SEARCH("${gender}", Sheet1!AU2:AU)), Sheet1!C2:C<>"refunded"),` +
-          `"/"` +
-        `)),` +
-        `FILTER(Sheet1!AT2:AV, ISNUMBER(SEARCH("${gender}", Sheet1!AU2:AU)), Sheet1!C2:C<>"refunded")` +
-      `),` +
-    `4, TRUE)`
+    `=LET(` +
+      `raw, FILTER(Sheet1!U2:U, ISNUMBER(SEARCH("${gender}", Sheet1!AU2:AU)), Sheet1!C2:C<>"refunded"),` +
+      `s, ARRAYFORMULA(SPLIT(raw, "/")) ,` +
+      // s columns: 1=Item, 2=Drink, 3=Spice  -> output: Item, Spice, Drink
+      `core, HSTACK(INDEX(s,,1), INDEX(s,,3), INDEX(s,,2)),` +
+      `rest, FILTER(Sheet1!AT2:AV, ISNUMBER(SEARCH("${gender}", Sheet1!AU2:AU)), Sheet1!C2:C<>"refunded"),` +
+      `SORT(HSTACK(core, rest), 4, TRUE)` +
+    `)`
   );
+
 
 
 
@@ -113,44 +113,36 @@ function createCombinedSummarySheet(ss) {
   const dataSheet = ss.getSheetByName("Sheet1");
   if (!dataSheet) return;
 
-
   const lastRow = dataSheet.getLastRow();
   if (lastRow < 2) return;
 
-
-  const lineItems = dataSheet.getRange("U2:U" + lastRow).getValues(); // Item/Spice/Drink
+  const lineItems = dataSheet.getRange("U2:U" + lastRow).getValues(); // Item/Drink/Spice
   const statuses  = dataSheet.getRange("C2:C" + lastRow).getValues(); // refunded?
-
 
   const itemSpiceCounts = {}; // merges MEAL + non-MEAL (after stripping MEAL:)
   const drinkCounts = {};
-
-
-  const mealByItem = {};      // MEAL-only by main item (stripped)
-  const nonMealByItem = {};   // Non-MEAL-only by main item
-
+  const mealByItem = {};
+  const nonMealByItem = {};
 
   let totalMeals = 0;
   let totalNonMeals = 0;
-
 
   for (let i = 0; i < lineItems.length; i++) {
     const status = (statuses[i][0] || "").toString().toLowerCase();
     if (status === "refunded") continue;
 
-
     const raw = lineItems[i][0];
     if (!raw) continue;
-
 
     const parts = String(raw).split("/");
     if (parts.length < 3) continue;
 
+    let item = parts[0].trim();     // may be "MEAL: X"
+    const drinkRaw = parts[1].trim();
+    const spiceRaw = parts[2].trim();
 
-    let item = parts[0].trim();   // may be "MEAL: X"
-    const spice = parts[1].trim();
-    const drink = parts[2].trim();
-
+    const drink = isNA_(drinkRaw) ? "" : drinkRaw;
+    const spice = isNA_(spiceRaw) ? "" : spiceRaw;
 
     const isMeal = /^meal:/i.test(item);
     if (isMeal) {
@@ -163,89 +155,63 @@ function createCombinedSummarySheet(ss) {
       nonMealByItem[item] = (nonMealByItem[item] || 0) + 1;
     }
 
-
-    // Food aggregation (MEAL + non-MEAL merged) by item+spice
+    // Food aggregation by item+spice (spice may be blank)
     const itemKey = item + "||" + spice;
     itemSpiceCounts[itemKey] = (itemSpiceCounts[itemKey] || 0) + 1;
 
-
-    // Drinks aggregation (skip "None ...")
-    if (
-      drink &&
-      drink.toLowerCase() !== "none (can only buy drink with meal)".toLowerCase()
-    ) {
+    // Drinks aggregation (ignore blank/NA)
+    if (drink) {
       drinkCounts[drink] = (drinkCounts[drink] || 0) + 1;
     }
   }
-
 
   // Create/reset summary sheet
   let sheet = ss.getSheetByName("Orders Summary");
   if (sheet) ss.deleteSheet(sheet);
   sheet = ss.insertSheet("Orders Summary");
 
-
-  // Headers (display-only columns)
   sheet.getRange("A1").setValue("Food Orders");
   sheet.getRange("C1").setValue("Drink Orders");
   sheet.getRange("E1").setValue("MEAL Breakdown (by main item)");
   sheet.getRange("F1").setValue("Non-MEAL Breakdown (by main item)");
 
+  const foodDisplay = Object.keys(itemSpiceCounts).sort().map(key => {
+    const [itemName, spice] = key.split("||");
+    const count = itemSpiceCounts[key];
+    return [foodDisplayLine_(itemName, spice, count)];
+  });
 
-  // Build display lists
-  const foodDisplay = Object.keys(itemSpiceCounts)
-    .sort()
-    .map(key => {
-      const [itemName, spice] = key.split("||");
-      const count = itemSpiceCounts[key];
-      return [`${itemName}: ${spice} x${count}`];
-    });
+  const drinkDisplay = Object.keys(drinkCounts).sort().map(d => {
+    return [`${d} x${drinkCounts[d]}`];
+  });
 
+  const mealDisplay = Object.keys(mealByItem).sort().map(itemName => {
+    return [`${itemName} MEAL x${mealByItem[itemName]}`];
+  });
 
-  const drinkDisplay = Object.keys(drinkCounts)
-    .sort()
-    .map(drink => [`${drink} x${drinkCounts[drink]}`]);
+  const nonMealDisplay = Object.keys(nonMealByItem).sort().map(itemName => {
+    return [`${itemName} x${nonMealByItem[itemName]}`];
+  });
 
-
-  const mealDisplay = Object.keys(mealByItem)
-    .sort()
-    .map(itemName => [`${itemName} MEAL x${mealByItem[itemName]}`]);
-
-
-  const nonMealDisplay = Object.keys(nonMealByItem)
-    .sort()
-    .map(itemName => [`${itemName} x${nonMealByItem[itemName]}`]);
-
-
-  // Write columns
   if (foodDisplay.length)    sheet.getRange(2, 1, foodDisplay.length, 1).setValues(foodDisplay);
   if (drinkDisplay.length)   sheet.getRange(2, 3, drinkDisplay.length, 1).setValues(drinkDisplay);
   if (mealDisplay.length)    sheet.getRange(2, 5, mealDisplay.length, 1).setValues(mealDisplay);
   if (nonMealDisplay.length) sheet.getRange(2, 6, nonMealDisplay.length, 1).setValues(nonMealDisplay);
 
-
-  // Footer block (labels + values)
   const footerRow = Math.max(foodDisplay.length, drinkDisplay.length, mealDisplay.length, nonMealDisplay.length) + 4;
-
 
   sheet.getRange(footerRow, 1).setValue("Total MEAL Orders:");
   sheet.getRange(footerRow, 2).setValue(totalMeals);
 
-
   sheet.getRange(footerRow + 1, 1).setValue("Total Non-MEAL Orders:");
   sheet.getRange(footerRow + 1, 2).setValue(totalNonMeals);
 
-
   sheet.getRange(footerRow + 2, 1).setValue("Extra Orders:");
-  sheet.getRange(footerRow + 2, 2).setValue(""); // manual later
-
+  sheet.getRange(footerRow + 2, 2).setValue(""); // manual
 
   sheet.getRange(footerRow + 3, 1).setValue("Total Orders:");
-  // ✅ formula sum of the 3 cells above it (meal + nonmeal + extra)
   sheet.getRange(footerRow + 3, 2).setFormula(`=SUM(B${footerRow}:B${footerRow + 2})`);
 
-
-  // Formatting + readable widths
   sheet.getRange("A1:F1").setFontWeight("bold").setBackground("#e0e0e0");
   [1, 3, 5, 6].forEach(c => sheet.autoResizeColumn(c));
   sheet.setColumnWidth(1, Math.max(sheet.getColumnWidth(1), 320));
@@ -260,116 +226,88 @@ function createCombinedSummarySheet(ss) {
 
 
 
+
 function createGenderSummarySheet(ss, gender, sheetName) {
   const dataSheet = ss.getSheetByName("Sheet1");
   if (!dataSheet) return;
 
-
   const lastRow = dataSheet.getLastRow();
   if (lastRow < 2) return;
 
-
-  const lineItems = dataSheet.getRange("U2:U" + lastRow).getValues();   // Item/Spice/Drink
+  const lineItems = dataSheet.getRange("U2:U" + lastRow).getValues();   // Item/Drink/Spice
   const statuses  = dataSheet.getRange("C2:C" + lastRow).getValues();   // refunded?
   const genders   = dataSheet.getRange("AU2:AU" + lastRow).getValues(); // gender text
-
 
   const itemSpiceCounts = {};
   const drinkCounts = {};
   let totalMeals = 0;
 
-
   for (let i = 0; i < lineItems.length; i++) {
     const status = (statuses[i][0] || "").toString().toLowerCase();
     if (status === "refunded") continue;
 
-
     const g = (genders[i][0] || "").toString();
     if (!g.includes(gender)) continue;
-
 
     const raw = lineItems[i][0];
     if (!raw) continue;
 
-
     const parts = String(raw).split("/");
     if (parts.length < 3) continue;
 
-
     let item = parts[0].trim();
-    const spice = parts[1].trim();
-    const drink = parts[2].trim();
+    const drinkRaw = parts[1].trim();
+    const spiceRaw = parts[2].trim();
 
+    const drink = isNA_(drinkRaw) ? "" : drinkRaw;
+    const spice = isNA_(spiceRaw) ? "" : spiceRaw;
 
     const isMeal = /^meal:/i.test(item);
     if (isMeal) {
       totalMeals++;
-      item = item.replace(/^meal:\s*/i, "").trim(); // merge MEAL + non-MEAL
+      item = item.replace(/^meal:\s*/i, "").trim(); // merge MEAL + non-MEAL for food list
     }
 
-
-    // Food aggregation by item+spice
     const itemKey = item + "||" + spice;
     itemSpiceCounts[itemKey] = (itemSpiceCounts[itemKey] || 0) + 1;
 
-
-    // Drinks aggregation (skip "None ...")
-    if (
-      drink &&
-      drink.toLowerCase() !== "none (can only buy drink with meal)".toLowerCase()
-    ) {
+    if (drink) {
       drinkCounts[drink] = (drinkCounts[drink] || 0) + 1;
     }
   }
 
-
-  // Create/reset sheet
   let sheet = ss.getSheetByName(sheetName);
   if (sheet) ss.deleteSheet(sheet);
   sheet = ss.insertSheet(sheetName);
 
-
-  // Headers
   sheet.getRange("A1").setValue("Food Orders");
   sheet.getRange("C1").setValue("Drink Orders");
 
+  const foodDisplay = Object.keys(itemSpiceCounts).sort().map(key => {
+    const [itemName, spice] = key.split("||");
+    const count = itemSpiceCounts[key];
+    return [foodDisplayLine_(itemName, spice, count)];
+  });
 
-  // Display lists
-  const foodDisplay = Object.keys(itemSpiceCounts)
-    .sort()
-    .map(key => {
-      const [itemName, spice] = key.split("||");
-      const count = itemSpiceCounts[key];
-      return [`${itemName}: ${spice} x${count}`];
-    });
-
-
-  const drinkDisplay = Object.keys(drinkCounts)
-    .sort()
-    .map(d => [`${d} x${drinkCounts[d]}`]);
-
+  const drinkDisplay = Object.keys(drinkCounts).sort().map(d => {
+    return [`${d} x${drinkCounts[d]}`];
+  });
 
   if (foodDisplay.length) sheet.getRange(2, 1, foodDisplay.length, 1).setValues(foodDisplay);
   if (drinkDisplay.length) sheet.getRange(2, 3, drinkDisplay.length, 1).setValues(drinkDisplay);
 
-
-  // ✅ Footer as label/value in A/B (not merged into one cell)
   const footerRow = Math.max(foodDisplay.length, drinkDisplay.length) + 4;
   sheet.getRange(footerRow, 1).setValue("Total MEAL Orders:");
   sheet.getRange(footerRow, 2).setValue(totalMeals);
 
-
-  // Formatting + readable widths
   sheet.getRange("A1:C1").setFontWeight("bold").setBackground("#e0e0e0");
   sheet.autoResizeColumn(1);
   sheet.autoResizeColumn(3);
   sheet.setColumnWidth(1, Math.max(sheet.getColumnWidth(1), 320));
   sheet.setColumnWidth(3, Math.max(sheet.getColumnWidth(3), 220));
-
-
-  // Footer label bold
   sheet.getRange(footerRow, 1).setFontWeight("bold");
 }
+
 
 
 
@@ -667,3 +605,13 @@ function colA1ToIndex_(letters) {
   return n;
 }
 
+function isNA_(s) {
+  const t = String(s || "").trim().toLowerCase();
+  return t === "" || t === "didn't" || t.startsWith("didn't");
+}
+
+function foodDisplayLine_(item, spice, count) {
+  const spiceClean = isNA_(spice) ? "" : String(spice).trim();
+  if (!spiceClean) return `${item} x${count}`;
+  return `${item}: ${spiceClean} x${count}`;
+}
