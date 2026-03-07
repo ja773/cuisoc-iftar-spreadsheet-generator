@@ -212,8 +212,8 @@ function createCombinedSummarySheet(ss) {
     if (!v.main) continue;
 
     let main = v.main.trim();
-    const side = isNA_(v.side) ? "" : v.side.trim();
     const spice = isNA_(v.spice) ? "" : v.spice.trim();
+    const side = isNA_(v.side) ? "" : v.side.trim();
     const drink = isNA_(v.drink) ? "" : v.drink.trim();
 
     const isMeal = /^meal:/i.test(main);
@@ -321,8 +321,8 @@ function createGenderSummarySheet(ss, gender, sheetName) {
     if (!v.main) continue;
 
     let main = v.main.trim();
-    const side = isNA_(v.side) ? "" : v.side.trim();
     const spice = isNA_(v.spice) ? "" : v.spice.trim();
+    const side = isNA_(v.side) ? "" : v.side.trim();
     const drink = isNA_(v.drink) ? "" : v.drink.trim();
 
     if (/^meal:/i.test(main)) {
@@ -625,9 +625,9 @@ function isNA_(s) {
 function parseVariant_(raw) {
   const parts = String(raw || "").split("/").map(p => p.trim());
   // 4-part: main/side/spice/drink
-  if (parts.length >= 4) return { main: parts[0], side: parts[1], spice: parts[2], drink: parts[3] };
+  if (parts.length >= 4) return { main: parts[0], spice: parts[1], side: parts[2], drink: parts[3] };
   // fallback 3-part: main/drink/spice
-  if (parts.length === 3) return { main: parts[0], side: "", spice: parts[2], drink: parts[1] };
+  if (parts.length === 3) return { main: parts[0], spice: "", side: parts[2], drink: parts[1] };
   return { main: "", side: "", spice: "", drink: "" };
 }
 
