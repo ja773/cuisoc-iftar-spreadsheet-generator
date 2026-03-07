@@ -84,7 +84,7 @@ function createGenderSheet(ss, sheetName, genderNeedle) {
     // ✅ STRICT: must be exactly 4 parts
     if (parts.length !== 4) continue;
 
-    let [main, side, spice, drink] = parts;
+    let [main, spice, side, drink] = parts;
 
     // Blank out NA values
     side = isNA_(side) ? "" : side;
